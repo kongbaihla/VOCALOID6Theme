@@ -8,7 +8,7 @@
 
 > ⚠️ 非 Yamaha 官方工具。仅修改运行中进程的内存，不修改、不重签名
 > `VOCALOID6.dll`。任何失败只会导致「主题不生效」，不会让编辑器崩溃。
-> 
+|界面示例|
 |-|
 |<img width="630" height="405" alt="image" src="https://github.com/user-attachments/assets/b30be0f3-0fe3-4495-9d27-f807b121c918" />|
 |-|
