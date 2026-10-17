@@ -12,6 +12,20 @@
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- WinExe: no console window. This is the whole point of the launcher. -->
     <UseWindowsForms>false</UseWindowsForms>
+
+    <!-- Application icon. Uses the same artwork as V6PAC so the two tools read
+         as one family: the .ico carries 16/24/32/48/64/128/256, which is what
+         Explorer, the taskbar and Alt+Tab each ask for. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+
+    <!-- Version info shown in the file's Properties > Details tab. Without
+         these the exe reports an empty "File version" and looks unsigned-off. -->
+    <Product>V6 Theme</Product>
+    <AssemblyTitle>V6主题版</AssemblyTitle>
+    <Description>以内存注入方式为 VOCALOID6 Editor 换肤，不写入安装目录</Description>
+    <Version>1.0.0</Version>
+    <FileVersion>1.0.0.0</FileVersion>
+    <Company>kongbaihla</Company>
   </PropertyGroup>
 
   <!--
