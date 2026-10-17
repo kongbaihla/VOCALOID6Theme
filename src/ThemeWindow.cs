@@ -652,16 +652,61 @@ namespace V6RamTheme
         // Deliberately writes ONLY v6.cfg. The accent token lives in v6.theme and
         // still needs an explicit 保存, because switching colour is a bigger,
         // visible change that the user should confirm.
+        // Merge-write v6.cfg: update the keys this window owns, leave every other
+        // key exactly as it was.
+        //
+        // This file is shared. ProjectStats owns "projects", ThemeMenu owns
+        // "showproject", and this window owns sat/bg/smooth/smoothplay/fps.
+        // Previously each writer emitted the whole file from its own five
+        // values, so saving a colour silently erased "projects" and
+        // "showproject" - observed as the calendar going blank and the project
+        // stopwatch disappearing right after changing the accent colour.
+        private static void WriteCfgKeys(Dictionary<string, string> owned)
+        {
+            var path = Path.Combine(_dir, "v6.cfg");
+            var lines = new List<string>();
+            try
+            {
+                if (File.Exists(path)) lines.AddRange(File.ReadAllLines(path));
+            }
+            catch (Exception ex)
+            {
+                Log.Write("read cfg fail: " + ex.Message);
+            }
+
+            foreach (var kv in owned)
+            {
+                bool replaced = false;
+                for (int i = 0; i < lines.Count; i++)
+                {
+                    var t = lines[i].Trim();
+                    var eq = t.IndexOf('=');
+                    if (eq <= 0) continue;
+                    if (t.Substring(0, eq).Trim() != kv.Key) continue;
+                    lines[i] = kv.Key + "=" + kv.Value;
+                    replaced = true;
+                    break;
+                }
+                if (!replaced) lines.Add(kv.Key + "=" + kv.Value);
+            }
+
+            File.WriteAllText(path, string.Join(Environment.NewLine, lines) + Environment.NewLine);
+        }
+
+        private static Dictionary<string, string> OwnedCfgKeys() => new Dictionary<string, string>
+        {
+            ["sat"] = _sat.ToString("F2", CultureInfo.InvariantCulture),
+            ["bg"] = _bg.ToString("F2", CultureInfo.InvariantCulture),
+            ["smooth"] = _smooth ? "1" : "0",
+            ["smoothplay"] = _play ? "1" : "0",
+            ["fps"] = _fps.ToString("F0", CultureInfo.InvariantCulture),
+        };
+
         private static void PersistToggles()
         {
             try
             {
-                var cfg = "sat=" + _sat.ToString("F2", CultureInfo.InvariantCulture) +
-                          "\nbg=" + _bg.ToString("F2", CultureInfo.InvariantCulture) +
-                          "\nsmooth=" + (_smooth ? "1" : "0") +
-                          "\nsmoothplay=" + (_play ? "1" : "0") +
-                          "\nfps=" + _fps.ToString("F0", CultureInfo.InvariantCulture);
-                File.WriteAllText(Path.Combine(_dir, "v6.cfg"), cfg);
+                WriteCfgKeys(OwnedCfgKeys());
             }
             catch (Exception ex)
             {
@@ -676,12 +721,7 @@ namespace V6RamTheme
                 File.WriteAllText(Path.Combine(_dir, "v6.theme"), _token);
                 Bootstrap.ActiveToken = _token;   // keep menu dot in sync now
                 OnThemeChanged?.Invoke(_token);
-                File.WriteAllText(Path.Combine(_dir, "v6.cfg"),
-                    "sat=" + _sat.ToString("F2", CultureInfo.InvariantCulture) +
-                    "\nbg=" + _bg.ToString("F2", CultureInfo.InvariantCulture) +
-                    "\nsmooth=" + (_smooth ? "1" : "0") +
-                    "\nsmoothplay=" + (_play ? "1" : "0") +
-                    "\nfps=" + _fps.ToString("F0", CultureInfo.InvariantCulture));
+                WriteCfgKeys(OwnedCfgKeys());
                 Bootstrap.Smooth = _smooth;
                 Bootstrap.SmoothPlay = _play;
                 Bootstrap.MaxFps = _fps;

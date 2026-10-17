@@ -52,30 +52,48 @@ internal static class Program
                 return 1;
             }
 
-            // Set the hook in THIS process, then start the editor through the
-            // shell. Verified on this machine:
+            // The editor MUST be given a console.
             //
-            //   UseShellExecute = true  + EnvironmentVariables[...]  -> throws
-            //       "Process 对象必须将 UseShellExecute 属性设置为 False 才能使用环境变量"
-            //   UseShellExecute = true  + our own Environment.SetVariable    -> the
-            //       child DOES inherit it (measured with a cmd /c set probe)
+            // VOCALOIDPatcher (a separate old injector that also lives in this
+            // process) calls Console.OutputEncoding during Patcher.Initialize().
+            // With no console that throws "invalid handle", it shows a modal
+            // "VOCALOID Patcher Error" dialog, and VOCALOID6 never creates its
+            // main window - the editor looks dead.
             //
-            // So: mutate our own environment, then let the shell start the editor
-            // exactly as Explorer would. That matters because UseShellExecute=false
-            // gave the child no console, and the old VOCALOIDPatcher calls
-            // Console.OutputEncoding at startup - without a console it throws
-            // "invalid handle" and blocks the editor behind a modal error.
-            // Shell-starting avoids the whole problem: no cmd, no console, no error.
-            Environment.SetEnvironmentVariable("DOTNET_STARTUP_HOOKS", hook);
-
+            // Two previous attempts were wrong, and both were only caught because
+            // the failure was reproduced by hand:
+            //
+            //   1. `cmd /c` via UseShellExecute=false, CreateNoWindow=false
+            //      -> works, but leaves a black console window on screen for the
+            //         whole session (cmd /c waits for its child).
+            //
+            //   2. `UseShellExecute = true` (what the official V6Launcher does)
+            //      -> looked fine in testing, but ONLY because every test was
+            //         launched from PowerShell, whose console the launcher
+            //         inherited. Double-clicked from Explorer there is no console
+            //         to inherit and the patcher error comes straight back.
+            //         Testing from a console hid the bug - do not trust it.
+            //
+            // What actually works: cmd /c WITH an explicitly hidden console
+            // (CREATE_NO_WINDOW). The child gets a real console handle, and no
+            // window is ever shown.
+            //
+            // The hook must be set here rather than inside the cmd payload:
+            // ProcessStartInfo.EnvironmentVariables is applied to the child's
+            // environment directly, so the editor sees it without a second `set`.
             var psi = new ProcessStartInfo
             {
-                FileName = editor,
-                UseShellExecute = true,
+                FileName = "cmd.exe",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
                 WorkingDirectory = Path.GetDirectoryName(editor),
             };
-            if (args.Length > 0)
-                psi.Arguments = string.Join(" ", Array.ConvertAll(args, Quote));
+            psi.EnvironmentVariables["DOTNET_STARTUP_HOOKS"] = hook;
+
+            var cmd = "/c \"" + editor + "\"";
+            foreach (var a in args) cmd += " " + Quote(a);
+            psi.Arguments = cmd;
 
             Process.Start(psi);
             return 0;
