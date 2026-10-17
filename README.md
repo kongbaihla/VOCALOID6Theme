@@ -2,6 +2,8 @@
 
 在**内存里**给 VOCALOID6 Editor 换配色，**一个字节都不写进安装目录**。
 
+有问题，嗯。。。。qq群？1128455018
+
 通过 .NET 官方的 `DOTNET_STARTUP_HOOKS` 机制在 VOCALOID6 启动时加载本 DLL，
 用 Lib.Harmony 挂钩 WPF 内部的颜色解析器（`MS.Internal.Parsers.ParseColor`
 等 4 个方法），把原始颜色在内存中替换成目标色。
