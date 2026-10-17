@@ -13,7 +13,7 @@
 | 界面示例 |
 |-|
 |<img width="630" height="405" alt="image" src="https://github.com/user-attachments/assets/b30be0f3-0fe3-4495-9d27-f807b121c918" />|
-|<img width="602" height="494" alt="image" src="https://github.com/user-attachments/assets/fb0a6788-8ccc-41f2-83bd-320b9fe97cdc" />|
+|<img width="630" height="517" alt="image" src="https://github.com/user-attachments/assets/fb0a6788-8ccc-41f2-83bd-320b9fe97cdc" />|
 
 ---
 
