@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>WheelLab</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- probe\ is a scratch isolation harness with its OWN Main(); it must never
+         be compiled into this suite (duplicate Main + duplicate assembly attrs). -->
+    <Compile Remove="probe\**" />
+    <None Remove="probe\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile the REAL shipping sources into the harness: no reimplementation,
+         the same classes the editor loads. ThemeMenu/ThemeWindow are stubbed in
+         Stubs.cs (they are not under test here). -->
+    <Compile Include="..\src\Program.cs" Link="src\Program.cs" />
+    <Compile Include="..\src\SmoothScroll.cs" Link="src\SmoothScroll.cs" />
+    <Compile Include="..\src\PlaybackSmooth.cs" Link="src\PlaybackSmooth.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Program.cs references Harmony types in TryPatch; needed to compile even
+         though the harness never calls Bootstrap.Run(). -->
+    <Reference Include="0Harmony">
+      <HintPath>E:\VOCALOID6\nuget-packages\lib.harmony\2.4.2\lib\net8.0\0Harmony.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

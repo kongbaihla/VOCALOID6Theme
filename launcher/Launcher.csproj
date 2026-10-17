@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>V6ThemeLauncher</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <DebugType>none</DebugType>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- WinExe: no console window. This is the whole point of the launcher. -->
+    <UseWindowsForms>false</UseWindowsForms>
+  </PropertyGroup>
+
+  <!--
+    Single-file publish.
+    The launcher is deliberately ONE self-contained .exe: it is copied next to
+    V6ThemeHook.dll with nothing else, so it must not need its own
+    .runtimeconfig.json / .deps.json side-cars (missing them was observed as
+    "exe does nothing at all": no log, no window, no process).
+    SelfContained stays on so the launcher does not depend on a machine-wide
+    .NET runtime; the editor it starts still uses the runtime that ships with
+    VOCALOID6.
+  -->
+  <PropertyGroup>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+  </PropertyGroup>
+
+</Project>

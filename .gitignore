@@ -1,0 +1,21 @@
+# 构建中间产物
+# 注意：这里不能用裸 bin/ —— dist/ 里的预编译 DLL 是要发布的。
+**/bin/
+**/obj/
+*.user
+*.suo
+
+# 运行时生成（含个人使用数据，绝不入库）
+v6.cfg
+v6.theme
+v6.usage
+v6theme.log
+
+# 验证截图
+verify_*.png
+v_*.png
+lab_*.png
+popup_*.png
+check_*.png
+help_popup.png
+_scratch_*.png

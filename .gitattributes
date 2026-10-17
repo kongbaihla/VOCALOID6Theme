@@ -1,0 +1,13 @@
+# Windows batch files MUST keep CRLF line endings and stay ASCII.
+# Git's default normalisation would otherwise convert them to LF on clone
+# (or on a Linux checkout), and cmd.exe then mis-parses every line:
+#   'LOID6' is not recognized as an internal or external command
+# That failure looks like a code bug but is purely a line-ending problem.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Fonts / binaries - never touch
+*.ico binary
+*.png binary
+*.dll binary
+*.pdf binary
