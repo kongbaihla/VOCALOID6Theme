@@ -246,16 +246,21 @@ namespace V6RamTheme
                 var name = ToProjectName(title);
                 if (string.IsNullOrEmpty(name)) return;
 
-                // Only accept names that resolve to a real project folder;
-                // anything else would create phantom entries. The resolved value
-                // is the FOLDER name, which is the key used for storage.
-                var canonical = ResolveProject(name);
-                if (canonical == null)
-                {
-                    Log.Write("autodetect: title '" + title + "' -> no matching project folder");
-                    return;
-                }
-
+                // Prefer the canonical .vpr stem when the project is inside the
+                // scanned library - that is what makes "(B)雨爱司冯版/雨爱.vpr"
+                // and the title "雨爱" agree on one key.
+                //
+                // But a match is NOT required. Timing and the heatmap answer
+                // different questions: the heatmap needs a folder to walk, while
+                // the stopwatch only needs the name the editor already puts in
+                // its own title bar. Requiring a match meant that with no
+                // `projects=` configured the timer silently refused to run even
+                // though the name was right there on screen.
+                //
+                // Phantom entries are prevented by ToProjectName (which only
+                // accepts text after " - ") and by the stability window, not by
+                // this lookup.
+                var canonical = ResolveProject(name) ?? name;
                 _pendingProject = canonical;
                 _pendingStable = 1;
             }
