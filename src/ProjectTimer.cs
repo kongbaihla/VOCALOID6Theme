@@ -29,6 +29,7 @@ namespace V6RamTheme
     internal static class ProjectTimer
     {
         private const string FileName = "v6.ptime";
+        private const string OpensFileName = "v6.opens";
         private const int FlushSeconds = 30;
 
         private static readonly object _lock = new object();
@@ -63,6 +64,7 @@ namespace V6RamTheme
             try
             {
                 Load();
+                LoadOpens();
                 _lastTickUtc = DateTime.UtcNow;
                 _lastFlushUtc = _lastTickUtc;
 
@@ -136,7 +138,154 @@ namespace V6RamTheme
                 _selected = project;
             }
             Log.Write("project timer select: " + (project ?? "(none)"));
+
+            // Count a real open. Select() only fires when the title settled on a
+            // DIFFERENT project, so A->A (dirty marker, re-title) is already
+            // filtered out upstream. Opening A again after leaving it counts
+            // again, which is what "打开次数" means.
+            if (!string.IsNullOrEmpty(project)) CountOpen(project);
+
             Flush();
+        }
+
+        // ---- per-day open counts -------------------------------------------
+        //
+        // The ONLY source of true open counts is this program observing them.
+        // .vpr keeps just one access timestamp, so a file opened on Monday and
+        // again on Tuesday records Tuesday only - history cannot be recovered.
+        // Counting therefore starts the first time this build runs, and the UI
+        // must not present it as if it covered the whole library.
+
+        private static readonly Dictionary<string, int> _opens =
+            new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        private static string OpenKey(DateTime day, string project) =>
+            day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "|" + project;
+
+        private static void CountOpen(string project)
+        {
+            try
+            {
+                var key = OpenKey(DateTime.Today, project);
+                lock (_lock)
+                {
+                    _opens.TryGetValue(key, out int n);
+                    _opens[key] = n + 1;
+                }
+                SaveOpens();
+            }
+            catch (Exception ex)
+            {
+                Log.Write("count open fail: " + ex.Message);
+            }
+        }
+
+        /// <summary>Opens recorded for a given day (0 when nobody counted).</summary>
+        public static int OpensOn(DateTime day)
+        {
+            lock (_lock)
+            {
+                int total = 0;
+                var prefix = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "|";
+                foreach (var kv in _opens)
+                    if (kv.Key.StartsWith(prefix, StringComparison.Ordinal))
+                        total += kv.Value;
+                return total;
+            }
+        }
+
+        /// <summary>Days that have at least one recorded open.</summary>
+        public static IEnumerable<KeyValuePair<DateTime, int>> OpensByDay()
+        {
+            var acc = new Dictionary<DateTime, int>();
+            lock (_lock)
+            {
+                foreach (var kv in _opens)
+                {
+                    var bar = kv.Key.IndexOf('|');
+                    if (bar <= 0) continue;
+                    if (!DateTime.TryParseExact(kv.Key.Substring(0, bar), "yyyy-MM-dd",
+                            CultureInfo.InvariantCulture, DateTimeStyles.None, out var d))
+                        continue;
+                    acc.TryGetValue(d, out int n);
+                    acc[d] = n + kv.Value;
+                }
+            }
+            return acc.OrderBy(k => k.Key).ToList();
+        }
+
+        /// <summary>
+        /// Every open this program has ever recorded, across all days.
+        /// Counted, never inferred - and therefore only covers the period since
+        /// the open-count feature first ran on this machine.
+        /// </summary>
+        public static int TotalOpens()
+        {
+            lock (_lock)
+            {
+                int total = 0;
+                foreach (var kv in _opens) total += kv.Value;
+                return total;
+            }
+        }
+
+        private static void LoadOpens()
+        {
+            try
+            {
+                var path = Path.Combine(_dir, OpensFileName);
+                if (!File.Exists(path)) return;
+                foreach (var raw in File.ReadAllLines(path))
+                {
+                    var line = raw.Trim();
+                    if (line.Length == 0 || line[0] == '#') continue;
+                    var tab = line.LastIndexOf('\t');
+                    if (tab <= 0) continue;
+                    var key = line.Substring(0, tab);
+                    if (!int.TryParse(line.Substring(tab + 1), NumberStyles.Integer,
+                            CultureInfo.InvariantCulture, out int n) || n <= 0) continue;
+                    lock (_lock) { _opens[key] = n; }
+                }
+                Log.Write("open-count loaded: " + _opens.Count + " entries");
+            }
+            catch (Exception ex)
+            {
+                Log.Write("open-count load fail: " + ex.Message);
+            }
+        }
+
+        private static void SaveOpens()
+        {
+            try
+            {
+                var path = Path.Combine(_dir, OpensFileName);
+                string text;
+                lock (_lock)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.Append("# yyyy-MM-dd|project\topens\n");
+                    foreach (var kv in _opens.OrderBy(k => k.Key, StringComparer.Ordinal))
+                        sb.Append(kv.Key).Append('\t')
+                          .Append(kv.Value.ToString(CultureInfo.InvariantCulture)).Append('\n');
+                    text = sb.ToString();
+                }
+                var tmp = path + ".tmp";
+                File.WriteAllText(tmp, text);
+                try
+                {
+                    if (File.Exists(path)) File.Replace(tmp, path, null);
+                    else File.Move(tmp, path);
+                }
+                catch (IOException)
+                {
+                    File.WriteAllText(path, text);
+                    try { File.Delete(tmp); } catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("open-count save fail: " + ex.Message);
+            }
         }
 
         private static void Tick()

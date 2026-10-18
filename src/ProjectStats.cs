@@ -41,6 +41,7 @@ namespace V6RamTheme
             public long SizeBytes;       // REAL
             public DateTime FirstCreated;// REAL: earliest .vpr creation time
             public DateTime LastModified;// REAL: newest .vpr write time in the folder
+            public DateTime LastAccessed;// REAL: newest .vpr access time in the folder
             public string VprPath;       // REAL: the .vpr that drove LastModified
             public string[] VprNames;    // REAL: every .vpr file stem in this folder
             public int SpanDays;         // REAL: FirstCreated -> WorkDate
@@ -52,6 +53,7 @@ namespace V6RamTheme
         private static List<Project> _projects;
         private static Dictionary<DateTime, int> _perDay;
         private static bool _scanned;
+        private static int _fileCount;
 
         /// <summary>Folder that was scanned, for the window's footnote.</summary>
         public static string SourceFolder { get; private set; }
@@ -62,6 +64,17 @@ namespace V6RamTheme
         public static int ProjectCount
         {
             get { Ensure(); lock (_lock) { return _projects.Count; } }
+        }
+
+        /// <summary>
+        /// Total project FILES across the library, honouring the .vsqx/.mid
+        /// switches. This is what the "工程文件" card shows: a count of files,
+        /// not of folders, because "41 个" next to a folder path reads as
+        /// "41 files" to most people.
+        /// </summary>
+        public static int FileCount
+        {
+            get { Ensure(); lock (_lock) { return _fileCount; } }
         }
 
         /// <summary>Estimated launches keyed by work day.</summary>
@@ -267,8 +280,11 @@ namespace V6RamTheme
             {
                 var root = ResolveFolder();
                 var list = new List<Project>();
+                var exts = Extensions();
                 var perDay = new Dictionary<DateTime, int>();
+                var accessDays = new Dictionary<DateTime, HashSet<string>>();
                 int dated = 0;
+                int fileCount = 0;
 
                 if (Directory.Exists(root))
                 {
@@ -279,13 +295,15 @@ namespace V6RamTheme
                             var name = Path.GetFileName(dir);
 
                             // Skip non-project folders that merely look dated.
-                            var vprs = SafeVprs(dir);
+                            var vprs = SafeProjectFiles(dir, exts);
                             if (vprs.Count == 0) continue;
+                            fileCount += vprs.Count;
 
                             var p = new Project { Name = StripDate(name), VprCount = vprs.Count };
                             long size = 0;
                             DateTime firstCreated = DateTime.MaxValue;
                             DateTime newestWrite = DateTime.MinValue;
+                            DateTime newestAccess = DateTime.MinValue;
                             string newestPath = null;
                             var stems = new List<string>();
                             foreach (var f in vprs)
@@ -299,6 +317,24 @@ namespace V6RamTheme
                                     // "the project I touched most recently" means.
                                     var w = File.GetLastWriteTime(f);
                                     if (w > newestWrite) { newestWrite = w; newestPath = f; }
+                                    // Access time is the only REAL evidence of
+                                    // "I opened this on day X". Verified live:
+                                    // DisableLastAccess=2 and a probe file's
+                                    // stamp moved on read, so it is maintained.
+                                    //
+                                    // Heatmap scope is .vpr ONLY, regardless of
+                                    // the .vsqx/.mid switches. Those formats are
+                                    // shared with other software, so letting them
+                                    // drive the calendar would attribute someone
+                                    // else's file reads to a VOCALOID session.
+                                    // The switches therefore affect the file
+                                    // COUNT, never the calendar.
+                                    if (string.Equals(Path.GetExtension(f), ".vpr",
+                                            StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        var a = File.GetLastAccessTime(f);
+                                        if (a > newestAccess) newestAccess = a;
+                                    }
                                     // The editor titles its window with the .vpr
                                     // FILE name, not the folder name, so detection
                                     // needs both to match a title back to a folder.
@@ -311,6 +347,8 @@ namespace V6RamTheme
                             p.SizeBytes = size;
                             p.FirstCreated = firstCreated == DateTime.MaxValue
                                 ? DateTime.Today : firstCreated;
+                            p.LastAccessed = newestAccess == DateTime.MinValue
+                                ? p.FirstCreated : newestAccess;
                             p.LastModified = newestWrite == DateTime.MinValue
                                 ? p.FirstCreated : newestWrite;
                             p.VprPath = newestPath;
@@ -338,9 +376,24 @@ namespace V6RamTheme
                             EstimateFor(ref p);
                             list.Add(p);
 
-                            var day = p.WorkDate.Date;
-                            perDay.TryGetValue(day, out int n);
-                            perDay[day] = n + p.EstLaunches;
+                            // Heatmap: REAL data only.
+                            //
+                            // "How many projects did I have open on day X" comes
+                            // from .vpr access time, not from the launch estimate.
+                            // One project counts once per day even if it was
+                            // opened several times - access time only remembers
+                            // the last access, so repeated opens are invisible
+                            // and pretending otherwise would be inventing data.
+                            var accessDay = p.LastAccessed.Date;
+                            {
+                                HashSet<string> set;
+                                if (!accessDays.TryGetValue(accessDay, out set))
+                                {
+                                    set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                                    accessDays[accessDay] = set;
+                                }
+                                set.Add(p.Name);
+                            }
                         }
                         catch (Exception ex)
                         {
@@ -349,15 +402,33 @@ namespace V6RamTheme
                     }
                 }
 
+                // Screen out mass-access days, then convert to per-day counts.
+                //
+                // A day on which a large majority of the whole library was
+                // touched is not a work day - it is a backup pass, an antivirus
+                // scan, or a copy. Real evidence from this machine: 41 of 46
+                // .vpr files share one access date (2026-10-06), while the days
+                // that actually correspond to work have 2-3 files.
+                //
+                // The rule is proportional rather than a fixed number: it has to
+                // hold for a 5-project library and a 500-project one alike.
+                int noiseCut = Math.Max(8, list.Count * 3 / 10);
+                foreach (var kv in accessDays)
+                    if (kv.Value.Count < noiseCut)
+                        perDay[kv.Key] = kv.Value.Count;
+
                 lock (_lock)
                 {
                     _projects = list;
                     _perDay = perDay;
+                    _fileCount = fileCount;
                     DatedCount = dated;
                     SourceFolder = root;
                 }
-                Log.Write("project scan: " + list.Count + " folders, " + dated +
-                    " with a date in the name, root=" + root);
+                Log.Write("project scan: " + list.Count + " folders, " + fileCount +
+                    " files, " + dated + " with a date in the name, root=" + root);
+                Log.Write("heatmap: " + perDay.Count + " active days from access time (noise cut >= " +
+                    noiseCut + " projects/day)");
             }
             catch (Exception ex)
             {
@@ -366,18 +437,102 @@ namespace V6RamTheme
                 {
                     _projects = new List<Project>();
                     _perDay = new Dictionary<DateTime, int>();
+                    _fileCount = 0;
                     DatedCount = 0;
                 }
             }
         }
 
-        private static List<string> SafeVprs(string dir)
+        // Which extra file types count as "project files" besides .vpr.
+        //
+        // .vpr is always included: it is VOCALOID's own format and the one the
+        // editor titles its window with. The other two are OPT-IN because they
+        // are shared formats written by many programs - a folder full of MIDI
+        // loops would otherwise look like an extremely active project. Evidence
+        // from this machine: 91 .mid files sit inside one chord-pack folder, and
+        // 88 of them share a single access date from a bulk scan.
+        public static bool IncludeVsqx { get; set; }
+        public static bool IncludeMidi { get; set; }
+
+        /// <summary>Read the two opt-in switches from v6.cfg.</summary>
+        public static void LoadFileTypes()
         {
             try
             {
-                return Directory.EnumerateFiles(dir, "*.vpr", SearchOption.AllDirectories).ToList();
+                var cfg = CfgPath();
+                if (cfg == null || !File.Exists(cfg)) return;
+                foreach (var raw in File.ReadAllLines(cfg))
+                {
+                    var line = raw.Trim();
+                    var eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    var key = line.Substring(0, eq).Trim();
+                    var val = Bootstrap.ParseBool(line.Substring(eq + 1).Trim());
+                    if (key == "extvsqx") IncludeVsqx = val;
+                    else if (key == "extmidi") IncludeMidi = val;
+                }
             }
-            catch { return new List<string>(); }
+            catch (Exception ex)
+            {
+                Log.Write("load file types fail: " + ex.Message);
+            }
+        }
+
+        /// <summary>Persist the two switches, leaving every other cfg key alone.</summary>
+        public static void SaveFileTypes()
+        {
+            try
+            {
+                var cfg = CfgPath();
+                if (cfg == null) return;
+                var lines = File.Exists(cfg)
+                    ? new List<string>(File.ReadAllLines(cfg))
+                    : new List<string>();
+                foreach (var kv in new[] {
+                    Tuple.Create("extvsqx", IncludeVsqx ? "1" : "0"),
+                    Tuple.Create("extmidi", IncludeMidi ? "1" : "0") })
+                {
+                    bool done = false;
+                    for (int i = 0; i < lines.Count; i++)
+                    {
+                        var t = lines[i].Trim();
+                        var eq = t.IndexOf('=');
+                        if (eq <= 0) continue;
+                        if (t.Substring(0, eq).Trim() != kv.Item1) continue;
+                        lines[i] = kv.Item1 + "=" + kv.Item2;
+                        done = true;
+                        break;
+                    }
+                    if (!done) lines.Add(kv.Item1 + "=" + kv.Item2);
+                }
+                File.WriteAllText(cfg, string.Join(Environment.NewLine, lines) + Environment.NewLine);
+            }
+            catch (Exception ex)
+            {
+                Log.Write("save file types fail: " + ex.Message);
+            }
+        }
+
+        private static string[] Extensions()
+        {
+            var list = new List<string> { "*.vpr" };
+            if (IncludeVsqx) list.Add("*.vsqx");
+            if (IncludeMidi) { list.Add("*.mid"); list.Add("*.midi"); }
+            return list.ToArray();
+        }
+
+        private static List<string> SafeProjectFiles(string dir, string[] patterns)
+        {
+            var all = new List<string>();
+            foreach (var pat in patterns)
+            {
+                try
+                {
+                    all.AddRange(Directory.EnumerateFiles(dir, pat, SearchOption.AllDirectories));
+                }
+                catch { }
+            }
+            return all;
         }
 
         // Earliest of creation times, capped at the newest write so a

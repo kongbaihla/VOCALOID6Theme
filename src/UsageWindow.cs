@@ -96,11 +96,24 @@ namespace V6RamTheme
 
         public static void ShowOrFocus()
         {
+            // Rescan before building so the numbers reflect the folder as it is
+            // now. Measured at 51 ms for 49 folders / 45 .vpr files, so paying
+            // it on every open is cheaper than showing a stale count.
+            //
+            // ProjectStats caches its scan for the whole process (it used to be
+            // scanned exactly once at startup), which meant a project folder
+            // created later never appeared until VOCALOID6 was restarted.
+            try { ProjectStats.Refresh(); }
+            catch (Exception ex) { Log.Write("usage rescan fail: " + ex.Message); }
+
             if (_win != null)
             {
-                if (_win.WindowState == WindowState.Minimized) _win.WindowState = WindowState.Normal;
-                _win.Activate();
-                return;
+                // Already open: the window's cells were built from the previous
+                // scan, so rebuild it rather than showing numbers that disagree
+                // with the folder.
+                var old = _win;
+                _win = null;
+                try { old.Close(); } catch { }
             }
             try
             {
@@ -162,9 +175,26 @@ namespace V6RamTheme
             stats.Children.Add(StatCard("累计使用", UsageStats.Fmt(combined), accent));
             stats.Children.Add(StatCard("本次会话", UsageStats.Fmt(UsageStats.ThisSession), accent));
             stats.Children.Add(StatCard("工程文件",
-                ProjectStats.ProjectCount.ToString(CultureInfo.InvariantCulture) + " 个", accent));
-            stats.Children.Add(StatCard("累计启动",
-                ProjectStats.TotalEstLaunches.ToString(CultureInfo.InvariantCulture) + " 次", accent));
+                ProjectStats.FileCount.ToString(CultureInfo.InvariantCulture) + " 个", accent));
+            // Real count, not an estimate: how many distinct days have at least
+            // one project opened. The old card showed EstLaunches, which was
+            // derived from folder span and size - a number that looked measured
+            // but was invented.
+            int activeDays;
+            try { activeDays = ProjectStats.Launches.Count(); }
+            catch { activeDays = 0; }
+            stats.Children.Add(StatCard("活跃天数",
+                activeDays.ToString(CultureInfo.InvariantCulture) + " 天", accent));
+
+            // Total opens recorded by this program. Lives next to 活跃天数
+            // because the two are read together ("N 天里开了 M 次"), and unlike
+            // the old 累计启动 card this one is counted, not inferred.
+            int totalOpens;
+            try { totalOpens = ProjectTimer.TotalOpens(); }
+            catch { totalOpens = 0; }
+            stats.Children.Add(StatCard("总启动",
+                totalOpens.ToString(CultureInfo.InvariantCulture) + " 次", accent));
+
             body.Children.Add(stats);
 
             // ---- current project: user-picked, REALLY timed ----
@@ -223,7 +253,7 @@ namespace V6RamTheme
             cardStack.Children.Add(titleRow);
             cardStack.Children.Add(new TextBlock
             {
-                Text = "每一格是一天，颜色越亮表示当天进行的工程越多、启动次数越高。",
+                Text = "每一格是一天，颜色越亮表示当天打开的工程越多。只统计 .vpr 的访问时间，与上方勾选无关。",
                 FontSize = 11,
                 Foreground = FgDim,
                 Margin = new Thickness(0, 0, 0, 4),
@@ -236,10 +266,63 @@ namespace V6RamTheme
                 FontSize = 10,
                 Foreground = FgDim,
                 TextTrimming = TextTrimming.CharacterEllipsis,
-                Margin = new Thickness(0, 0, 0, 10),
+                Margin = new Thickness(0, 0, 0, 6),
             });
 
-            var data = BuildDayData();
+            // Which file types count as a project. .vpr is always on (it is the
+            // editor's own format); the other two are shared formats that other
+            // software also writes, so they are opt-in and rescan on toggle.
+            var extRow = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+            extRow.Children.Add(new TextBlock
+            {
+                Text = "文件计数：vpr 固定",
+                FontSize = 10,
+                Foreground = FgDim,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+                ToolTip = "这一行只影响上方「工程文件」的数字，不影响下方热力图。",
+            });
+            Action<bool, bool> applyExt = (vsqx, midi) =>
+            {
+                ProjectStats.IncludeVsqx = vsqx;
+                ProjectStats.IncludeMidi = midi;
+                ProjectStats.SaveFileTypes();
+                ProjectStats.Refresh();
+                var old = _win;
+                _win = null;
+                try { old?.Close(); } catch { }
+                ShowOrFocus();
+            };
+            var cbVsqx = new CheckBox
+            {
+                Content = "vsqx",
+                IsChecked = ProjectStats.IncludeVsqx,
+                FontSize = 10,
+                Foreground = FgDim,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0),
+                Cursor = Cursors.Hand,
+            };
+            cbVsqx.Click += (s, e) =>
+                applyExt(cbVsqx.IsChecked == true, ProjectStats.IncludeMidi);
+            extRow.Children.Add(cbVsqx);
+
+            var cbMidi = new CheckBox
+            {
+                Content = "midi（含 .mid / .midi）",
+                IsChecked = ProjectStats.IncludeMidi,
+                FontSize = 10,
+                Foreground = FgDim,
+                VerticalAlignment = VerticalAlignment.Center,
+                Cursor = Cursors.Hand,
+                ToolTip = "MIDI 是通用格式，其他软件也会读写。素材包里的批量 MIDI 可能让某个工程显得异常活跃。",
+            };
+            cbMidi.Click += (s, e) =>
+                applyExt(ProjectStats.IncludeVsqx, cbMidi.IsChecked == true);
+            extRow.Children.Add(cbMidi);
+            cardStack.Children.Add(extRow);
+
+            var data = BuildDayStats();
             var today = DateTime.Today;
 
             // (the month strip is built inside the scaled block below, so it
@@ -252,7 +335,7 @@ namespace V6RamTheme
             // Computed once: the ramp normalises against the busiest day, and
             // recomputing it inside the 182-cell loop would rescan the whole
             // dictionary per cell.
-            int maxCount = Math.Max(1, data.Values.DefaultIfEmpty(1).Max());
+            int maxCount = Math.Max(1, data.Values.Select(v => v.Projects).DefaultIfEmpty(1).Max());
             for (int w = 0; w < Weeks; w++)
             {
                 var col = new StackPanel
@@ -263,8 +346,8 @@ namespace V6RamTheme
                 for (int d = 0; d < 7; d++)
                 {
                     var day = firstCol.AddDays(w * 7 + d);
-                    data.TryGetValue(day, out int count);
-                    col.Children.Add(MakeCell(day, count, today, accent, maxCount));
+                    data.TryGetValue(day, out var stat);
+                    col.Children.Add(MakeCell(day, stat, today, accent, maxCount));
                 }
                 grid.Children.Add(col);
             }
@@ -602,14 +685,29 @@ namespace V6RamTheme
         private const double CellGap = 4;     // vertical gap between the 7 rows
         private const double ColumnGap = 6;   // horizontal gap between the 26 weeks
 
-        private static Border MakeCell(DateTime day, int count, DateTime today, Color accent, int maxCount)
+        private static Border MakeCell(DateTime day, DayStat stat, DateTime today, Color accent, int maxCount)
         {
+            int count = stat.Projects;
             int level = 0;
             if (count > 0)
             {
                 // A single launch still has to read as a filled cell, so lv1 is
                 // the floor for any activity; the rest scale off the busiest day.
                 level = Math.Max(1, Math.Min(4, (int)Math.Ceiling(count * 4.0 / maxCount)));
+            }
+
+            // Tooltip states each number's coverage explicitly: Projects covers
+            // the whole library, Opens only since this build started counting.
+            string tip;
+            if (day > today) tip = null;
+            else if (count == 0 && stat.Opens == 0)
+                tip = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "  没有打开工程";
+            else
+            {
+                tip = day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) +
+                      "  打开过 " + count + " 个工程";
+                if (stat.Opens > 0)
+                    tip += "\n本工具记录到 " + stat.Opens + " 次打开";
             }
 
             bool future = day > today;
@@ -622,9 +720,7 @@ namespace V6RamTheme
                 Background = future ? Brushes.Transparent : new SolidColorBrush(LevelColor(level, accent)),
                 BorderBrush = (level == 0 && !future) ? EmptyEdge : Brushes.Transparent,
                 BorderThickness = new Thickness(1),
-                ToolTip = future ? null
-                        : count > 0 ? day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "  启动 " + count + " 次"
-                        : day.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) + "  未启动",
+                ToolTip = tip,
             };
             return cell;
         }
@@ -702,6 +798,51 @@ namespace V6RamTheme
             catch (Exception ex)
             {
                 Log.Write("usage window data fail: " + ex.Message);
+            }
+            return d;
+        }
+
+        /// <summary>
+        /// One heatmap day: two numbers with different provenance.
+        ///
+        /// Projects - REAL for the whole library: count of distinct .vpr files
+        ///            whose access time falls on that day.
+        /// Opens    - REAL but only since this program started counting; .vpr
+        ///            keeps a single access stamp, so earlier opens are simply
+        ///            not recoverable. Callers must label it as such.
+        ///
+        /// The cell colour follows Projects, because that is the only figure
+        /// that covers the whole history; Opens is shown in the tooltip.
+        /// </summary>
+        private struct DayStat
+        {
+            public int Projects;
+            public int Opens;
+        }
+
+        private static Dictionary<DateTime, DayStat> BuildDayStats()
+        {
+            var d = new Dictionary<DateTime, DayStat>();
+            try
+            {
+                foreach (var kv in ProjectStats.Launches)
+                {
+                    var day = kv.Key.Date;
+                    d.TryGetValue(day, out var s);
+                    s.Projects += kv.Value;
+                    d[day] = s;
+                }
+                foreach (var kv in ProjectTimer.OpensByDay())
+                {
+                    var day = kv.Key.Date;
+                    d.TryGetValue(day, out var s);
+                    s.Opens += kv.Value;
+                    d[day] = s;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Write("usage window daystats fail: " + ex.Message);
             }
             return d;
         }

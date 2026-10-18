@@ -296,6 +296,10 @@ namespace V6RamTheme
             // it cannot be automatic).
             try { ProjectTimer.Install(ownDir); } catch (Exception ex) { Log.Write("project timer install fail: " + ex.Message); }
 
+            // Which extra file types (.vsqx / .mid) count as project files.
+            // Read before anything scans, so the first scan already honours them.
+            try { ProjectStats.LoadFileTypes(); } catch (Exception ex) { Log.Write("load file types fail: " + ex.Message); }
+
             // install the "主题" menu into the editor menu bar (works in every
             // mode including off, so the menu can never lock itself out)
             ThemeMenu.Install(ownDir);
